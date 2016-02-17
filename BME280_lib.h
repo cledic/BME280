@@ -94,6 +94,11 @@
 #define BME280_PROFILE_INDOOR			(0x03)
 #define BME280_PROFILE_GAMING			(0x04)
 
+/* */
+#define BME280_GET_HUMIDITY				(1)
+#define BME280_GET_PRESSURE				(2)
+#define BME280_GET_TEMPERATURE			(3)
+
 typedef struct _CALIBRATION_VALUES {
 	uint16_t 	dig_T1;
 	int16_t		dig_T2;
@@ -276,6 +281,17 @@ int32_t BME280_SetProfile( int32_t p);
  */
  int32_t BME280_GetStatus( int32_t*s);
 
+
+/**
+ * \brief This function read all the parameter and return their raw values
+ *        No compensation is applayed
+ *
+ * \param[in] (uint32_t*)press		pointer to the return value
+ * \param[in] (uint32_t*)temp		pointer to the return value
+ * \param[in] (uint32_t*)hum		pointer to the return value
+ * \return					Return 0 for success or other values for errors.
+ */
+int32_t BME280_GetRawValues( uint32_t*press, uint32_t*temp, uint32_t*hum);
 
 /*
  * Suggested settings for weather monitoring
