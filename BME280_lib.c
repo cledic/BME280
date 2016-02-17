@@ -18,6 +18,7 @@
  * \brief Private functions
  */
 int32_t read_RegisterMultiValue(struct i2c_m_sync_desc *i2c, uint8_t reg, uint8_t *value, const uint16_t n);
+int32_t dump_Register( void);
 int32_t BME280_ReadCalibrationData( void);
 
 struct io_descriptor *I2C_0_io;
@@ -26,6 +27,7 @@ uint32_t			BME280_Init_Done=0;
 int32_t				ret=0;
 int32_t				t_fine;
 uint8_t				buffer[BME280_CALIB1_SZ+BME280_CALIB2_SZ];
+uint8_t				reg_values[4];
 
 /**
  * \brief Initialize low lever I2C interface and read the BME280 chip ID
@@ -49,6 +51,7 @@ int32_t BME280_Init(void)
 		BME280_ReadCalibrationData();
 		/* set default profile */
 		BME280_SetProfile( BME280_PROFILE_WEATHER);
+		dump_Register();
 		return 0;
 	} else {
 		return ret;
@@ -69,17 +72,22 @@ int32_t BME280_Get_Temperature( float*t)
 	if ( ret != 0)
 		return ret;
 	
+	/* verify the operation mode configured */
 	if ( mode==BME280_MODE_FORCED || mode==BME280_MODE_SLEEP) {
+		/* if the mode is SLEEP or FORCED we need to manually start a measure */
 		ret = BME280_SetSensorMode( BME280_MODE_FORCED);
 		if ( ret != 0)
 			return ret;
 	}
-	
+
+#if 0	
+	/* loop waiting the completion of acquisition */
 	do {
 		ret = BME280_GetStatus( &status);
 		if ( ret != 0)
 			return ret;
-	} while( status);
+	} while( status && 0x9);
+#endif
 	
 	ret = read_RegisterMultiValue( &I2C_0, BME280_REG_TEMP_MSB, &buffer[0], BME280_TEMP_SZ);
 	
@@ -106,19 +114,24 @@ int32_t BME280_Get_Pressure( float*p)
 
 	ret = BME280_GetSensorMode( &mode);
 	if ( ret != 0)
-	return ret;
+		return ret;
 	
+	/* verify the operation mode configured */
 	if ( mode==BME280_MODE_FORCED || mode==BME280_MODE_SLEEP) {
+		/* if the mode is SLEEP or FORCED we need to manually start a measure */
 		ret = BME280_SetSensorMode( BME280_MODE_FORCED);
 		if ( ret != 0)
-		return ret;
+			return ret;
 	}
-	
+
+#if 0	
+	/* loop waiting the completion of acquisition */
 	do {
 		ret = BME280_GetStatus( &status);
 		if ( ret != 0)
-		return ret;
+			return ret;
 	} while( status);
+#endif
 	
 	ret = read_RegisterMultiValue( &I2C_0, BME280_REG_PRESS_MSB, &buffer[0], BME280_PRESS_SZ);
 	
@@ -158,20 +171,25 @@ int32_t BME280_Get_Humidity( float*h)
 
 	ret = BME280_GetSensorMode( &mode);
 	if ( ret != 0)
-	return ret;
+		return ret;
 	
+	/* verify the operation mode configured */
 	if ( mode==BME280_MODE_FORCED || mode==BME280_MODE_SLEEP) {
+		/* if the mode is SLEEP or FORCED we need to manually start a measure */
 		ret = BME280_SetSensorMode( BME280_MODE_FORCED);
 		if ( ret != 0)
-		return ret;
+			return ret;
 	}
-	
+
+#if 0	
+	/* loop waiting the completion of acquisition */
 	do {
 		ret = BME280_GetStatus( &status);
 		if ( ret != 0)
-		return ret;
+			return ret;
 	} while( status);
-	
+#endif
+
 	ret = read_RegisterMultiValue( &I2C_0, BME280_REG_HUM_MSB, &buffer[0], BME280_HUM_SZ);
 	
 	v = (buffer[0]<<8) | buffer[1];
@@ -189,6 +207,52 @@ int32_t BME280_Get_Humidity( float*h)
 	*h = H/1024;
 	
 	return ret;
+}
+
+int32_t BME280_GetRawValues( uint32_t*press, uint32_t*temp, uint32_t*hum)
+{
+	uint32_t v;
+	int32_t mode, status;
+	
+	ret = BME280_GetSensorMode( &mode);
+	if ( ret != 0)
+		return ret;
+	
+	/* verify the operation mode configured */
+	if ( mode==BME280_MODE_FORCED || mode==BME280_MODE_SLEEP) {
+		/* if the mode is SLEEP or FORCED we need to manually start a measure */
+		ret = BME280_SetSensorMode( BME280_MODE_FORCED);
+		if ( ret != 0)
+			return ret;
+	}
+
+#if 0	
+	/* loop waiting the completion of acquisition */
+	do {
+		ret = BME280_GetStatus( &status);
+		if ( ret != 0)
+			return ret;
+	} while( status);
+#endif
+
+	/* slurp in all the raw values: pressure, temperature and humidity */
+	ret = read_RegisterMultiValue( &I2C_0, BME280_REG_PRESS_MSB, &buffer[0], BME280_PRESS_SZ+BME280_TEMP_SZ+BME280_HUM_SZ);
+	if ( ret < 0)
+		return ret;
+	
+	v = (buffer[0]<<16) | (buffer[1]<<8) | buffer[2];
+	v = (v>>4);
+	*press = v;
+	
+	v = (buffer[3]<<16) | (buffer[4]<<8) | buffer[5];
+	v = (v>>4);
+	*temp = v;
+	
+	v = (buffer[6]<<8) | buffer[7];
+	*hum = v;
+	
+	return 0;
+	
 }
 
  
@@ -243,85 +307,90 @@ int32_t BME280_ReadCalibrationData( void)
 
 int32_t BME280_SetTempOversampling( int32_t to)
 {
-	uint8_t value;
+	uint8_t b[2];
 	
-	ret = i2c_m_sync_cmd_read( &I2C_0, BME280_REG_CTRL_MEAS, &value);
+	ret = i2c_m_sync_cmd_read( &I2C_0, BME280_REG_CTRL_MEAS, &b[1]);
 	
 	if ( ret != 0)
 		return ret;
-		
-	value = value & (~BME280_TEMP_OVRSMPL_MASK);
-	value = value | to;
+
+	b[0] = BME280_REG_CTRL_MEAS;	
+	b[1] = b[1] & (~BME280_TEMP_OVRSMPL_MASK);
+	b[1] = b[1] | to;
 	
-	ret = i2c_m_sync_cmd_write( &I2C_0, BME280_REG_CTRL_MEAS, value);
+	io_write( I2C_0_io, &b[0], 2);
 	
 	return ret;
 }
 
 int32_t BME280_SetPressOversampling( int32_t po)
 {
-	uint8_t value;
+	uint8_t b[2];
 	
-	ret = i2c_m_sync_cmd_read( &I2C_0, BME280_REG_CTRL_MEAS, &value);
+	ret = i2c_m_sync_cmd_read( &I2C_0, BME280_REG_CTRL_MEAS, &b[1]);
 	
 	if ( ret != 0)
 		return ret;
 		
-	value = value & (~BME280_PRESS_OVRSMPL_MASK);
-	value = value | po;
+	b[0] = BME280_REG_CTRL_MEAS;
+	b[1] = b[1] & (~BME280_PRESS_OVRSMPL_MASK);
+	b[1] = b[1] | po;
 	
-	ret = i2c_m_sync_cmd_write( &I2C_0, BME280_REG_CTRL_MEAS, value);
+	io_write( I2C_0_io, &b[0], 2);
 	
 	return ret;
 }
 
 int32_t BME280_SetHumOversampling( int32_t ho)
 {
-	uint8_t value;
+	uint8_t b[2];
 	
-	ret = i2c_m_sync_cmd_read( &I2C_0, BME280_REG_CTRL_HUM, &value);
+	ret = i2c_m_sync_cmd_read( &I2C_0, BME280_REG_CTRL_HUM, &b[1]);
 	
 	if ( ret != 0)
 		return ret;
-		
-	value = value & (~BME280_HUM_OVRSMPL_MASK);
-	value = value | ho;
 	
-	ret = i2c_m_sync_cmd_write( &I2C_0, BME280_REG_CTRL_HUM, value);
+	b[0] = BME280_REG_CTRL_HUM;
+	b[1] = b[1] & (~BME280_HUM_OVRSMPL_MASK);
+	b[1] = b[1] | ho;
+	
+	io_write( I2C_0_io, &b[0], 2);
 	
 	return ret;
 }
 
 int32_t BME280_SetInactiveDuration( int32_t id)
 {
-	uint8_t value;
+	uint8_t b[2];
 	
-	ret = i2c_m_sync_cmd_read( &I2C_0, BME280_REG_CONFIG, &value);
+	ret = i2c_m_sync_cmd_read( &I2C_0, BME280_REG_CONFIG, &b[1]);
 	
 	if ( ret != 0)
 		return ret;
-		
-	value = value & (~BME280_TIME_MASK);
-	value = value | id;
 	
-	ret = i2c_m_sync_cmd_write( &I2C_0, BME280_REG_CONFIG, value);
+	b[0] = BME280_REG_CONFIG;
+	b[1] = b[1] & (~BME280_TIME_MASK);
+	b[1] = b[1] | id;
+	
+	io_write( I2C_0_io, &b[0], 2);
 	
 	return ret;
 }
 
 int32_t BME280_SetFilterCoeff( int32_t fc)
 {
-	uint8_t value;
+	uint8_t b[2];
 	
-	ret = i2c_m_sync_cmd_read( &I2C_0, BME280_REG_CONFIG, &value);
+	ret = i2c_m_sync_cmd_read( &I2C_0, BME280_REG_CONFIG, &b[1]);
 	
 	if ( ret != 0)
 		return ret;
-		
-	value = value & (~BME280_FLTRCOEFF_MASK);
-	value = value | fc;
 	
-	ret = i2c_m_sync_cmd_write( &I2C_0, BME280_REG_CONFIG, value);
+	b[0] = BME280_REG_CONFIG;
+	b[1] = b[1] & (~BME280_FLTRCOEFF_MASK);
+	b[1] = b[1] | fc;
+	
+	io_write( I2C_0_io, &b[0], 2);
 	
 	return ret;
 }
@@ -347,12 +416,13 @@ int32_t BME280_SetProfile( int32_t p)
 			 * RMS Noise 3.3 Pa / 30 cm, 0.07 %RH
 			 * Data output rate 1/60 Hz
 			 */
-			BME280_SetTempOversampling( BME280_TEMP_OVRSMPL_x1);
-			BME280_SetPressOversampling( BME280_PRESS_OVRSMPL_x1);
 			BME280_SetHumOversampling( BME280_HUM_OVRSMPL_x1);
+			BME280_SetTempOversampling( BME280_TEMP_OVRSMPL_x1);
+			BME280_SetPressOversampling( BME280_PRESS_OVRSMPL_x1);			
 			BME280_SetFilterCoeff( BME280_FLTRCOEFF_OFF);
 			BME280_SetInactiveDuration( BME280_TIME_SNDBY_1000);
 			BME280_SetSensorMode( BME280_MODE_FORCED);
+			dump_Register();
 		break;
 		case BME280_PROFILE_HUMIDITY:
 			/*
@@ -361,12 +431,13 @@ int32_t BME280_SetProfile( int32_t p)
 			 * RMS Noise 0.07 %RH
 			 * Data output rate 1 Hz
 			 */
-			BME280_SetTempOversampling( BME280_TEMP_OVRSMPL_x1);
-			BME280_SetPressOversampling( BME280_PRESS_OVRSMPL_SKIPPED);
 			BME280_SetHumOversampling( BME280_HUM_OVRSMPL_x1);
+			BME280_SetTempOversampling( BME280_TEMP_OVRSMPL_x1);
+			BME280_SetPressOversampling( BME280_PRESS_OVRSMPL_SKIPPED);			
 			BME280_SetFilterCoeff( BME280_FLTRCOEFF_OFF);
 			BME280_SetInactiveDuration( BME280_TIME_SNDBY_1000);		
 			BME280_SetSensorMode( BME280_MODE_FORCED);
+			dump_Register();
 		break;
 		case BME280_PROFILE_INDOOR:
 			/*
@@ -376,12 +447,13 @@ int32_t BME280_SetProfile( int32_t p)
 			 * Filter bandwidth 0.53 Hz
 			 * Response time (75%) 0.9 s
 			 */
-			BME280_SetTempOversampling( BME280_TEMP_OVRSMPL_x2);
-			BME280_SetPressOversampling(BME280_PRESS_OVRSMPL_x16);
 			BME280_SetHumOversampling( BME280_HUM_OVRSMPL_x1);
+			BME280_SetTempOversampling( BME280_TEMP_OVRSMPL_x2);
+			BME280_SetPressOversampling(BME280_PRESS_OVRSMPL_x16);			
 			BME280_SetFilterCoeff( BME280_FLTRCOEFF_16);
 			BME280_SetInactiveDuration( BME280_TIME_SNDBY_0_5);				
 			BME280_SetSensorMode( BME280_MODE_NORMAL);
+			dump_Register();
 		break;
 		case BME280_PROFILE_GAMING:
 			/*
@@ -391,21 +463,23 @@ int32_t BME280_SetProfile( int32_t p)
 			 * Filter bandwidth 1.75 Hz
 			 * Response time (75%) 0.3 s
 			 */
-			BME280_SetTempOversampling( BME280_TEMP_OVRSMPL_x1);
-			BME280_SetPressOversampling(BME280_PRESS_OVRSMPL_x4);
 			BME280_SetHumOversampling( BME280_HUM_OVRSMPL_SKIPPED);
+			BME280_SetTempOversampling( BME280_TEMP_OVRSMPL_x1);
+			BME280_SetPressOversampling(BME280_PRESS_OVRSMPL_x4);			
 			BME280_SetFilterCoeff( BME280_FLTRCOEFF_16);
 			BME280_SetInactiveDuration( BME280_TIME_SNDBY_0_5);						
 			BME280_SetSensorMode( BME280_MODE_NORMAL);
+			dump_Register();
 		break;
 		default:
 			/* default to weater profile... */
+			BME280_SetHumOversampling( BME280_HUM_OVRSMPL_x1);
 			BME280_SetTempOversampling( BME280_TEMP_OVRSMPL_x1);
 			BME280_SetPressOversampling( BME280_PRESS_OVRSMPL_x1);
-			BME280_SetHumOversampling( BME280_HUM_OVRSMPL_x1);
 			BME280_SetFilterCoeff( BME280_FLTRCOEFF_OFF);
 			BME280_SetInactiveDuration( BME280_TIME_SNDBY_1000);		
 			BME280_SetSensorMode( BME280_MODE_FORCED);
+			dump_Register();
 		break;
 	}
 	
@@ -414,17 +488,18 @@ int32_t BME280_SetProfile( int32_t p)
 
 int32_t BME280_SetSensorMode( int32_t sm)
 {
-	uint8_t value;
+	uint8_t b[2];
 	
-	ret = i2c_m_sync_cmd_read( &I2C_0, BME280_REG_CTRL_MEAS, &value);
+	ret = i2c_m_sync_cmd_read( &I2C_0, BME280_REG_CTRL_MEAS, &b[1]);
 	
 	if ( ret != 0)
 		return ret;
-		
-	value = value & (~BME280_MODE_MASK);
-	value = value | sm;
 	
-	ret = i2c_m_sync_cmd_write( &I2C_0, BME280_REG_CTRL_MEAS, value);
+	b[0] = BME280_REG_CTRL_MEAS;
+	b[1] = b[1] & (~BME280_MODE_MASK);
+	b[1] = b[1] | sm;
+	
+	io_write( I2C_0_io, &b[0], 2);
 	
 	return ret;
 }
@@ -438,8 +513,14 @@ int32_t BME280_GetSensorMode( int32_t*sm)
 	if ( ret != 0)
 	return ret;
 
-	*sm=(int32_t)value;
+	*sm=(int32_t)value&(BME280_MODE_MASK);
 	
+	return ret;
+}
+
+int32_t dump_Register( void)
+{
+	ret = read_RegisterMultiValue( &I2C_0, 0xF2, &reg_values[0], 4);
 	return ret;
 }
 
@@ -454,7 +535,7 @@ int32_t read_RegisterMultiValue(struct i2c_m_sync_desc *i2c, uint8_t reg, uint8_
 
 	ret = _i2c_m_sync_transfer(&i2c->device, &msg);
 
-	if (ret != 0) {
+	if (ret < 0) {
 		/* error occurred */
 		return ret;
 	}
